@@ -195,10 +195,12 @@ func SecretPage(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "%d logged in", claims.Rollno)
 }
 
+var mutex = &sync.Mutex{}
+
 func TransferCoin(w http.ResponseWriter, r *http.Request) {
 
 	var p TransferCred
-	var mutex = &sync.Mutex{}
+
 	mutex.Lock()
 	err := json.NewDecoder(r.Body).Decode(&p)
 	if err != nil {
@@ -211,9 +213,6 @@ func TransferCoin(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 	// defer db.Close()'
-	if p.Coin <= 0 {
-		panic("invalid Transaction")
-	}
 	if !UserExists(p.Torollno) {
 		panic("reciever does not exist")
 	}
@@ -226,18 +225,21 @@ func TransferCoin(w http.ResponseWriter, r *http.Request) {
 
 	ra, err := tx.ExecContext(ctx, "UPDATE user SET coin=coin-$1 WHERE rollno=$2 AND coin - $1>=0", p.Coin, p.Fromrollno)
 	if err != nil {
+		mutex.Unlock()
 		tx.Rollback()
 		return
 	}
 	rAffect, err := ra.RowsAffected()
 
 	if err != nil || rAffect == 0 {
+		mutex.Unlock()
 		tx.Rollback()
 		return
 	}
 
 	_, err = tx.ExecContext(ctx, "UPDATE user SET coin=coin+$1 WHERE rollno=$2", p.Coin, p.Torollno)
 	if err != nil {
+		mutex.Unlock()
 		tx.Rollback()
 		return
 	}
