@@ -2,6 +2,7 @@
 package handle
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,15 @@ type Person struct {
 type LoginCred struct {
 	Rollno   int
 	Password string
+}
+type Claims struct {
+	Rollno int
+	jwt.StandardClaims
+}
+type TransferCred struct {
+	Fromrollno int
+	Torollno   int
+	Coin       int
 }
 
 func hashAndSalt(pwd []byte) string {
@@ -48,33 +58,29 @@ func UserExists(rollno int) bool {
 	return false
 
 }
-func LoginUser(data LoginCred) {
 
-}
+// func LoginUser(data LoginCred) {
+
+// }
 func SignUpUser(data Person) {
 	db, err := sql.Open("sqlite3", "data.db")
 	if err != nil {
 		panic(err)
 	}
 	defer db.Close()
-	query, err := db.Prepare("CREATE TABLE IF NOT EXISTS user (rollno INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL,password TEXT NOT NULL)")
+	query, err := db.Prepare("CREATE TABLE IF NOT EXISTS user (rollno INTEGER PRIMARY KEY NOT NULL, name TEXT NOT NULL,password TEXT NOT NULL,coin INTEGER UNSIGNED check(coin >=0 ))")
 	if err != nil {
 		panic(err)
 	}
 	query.Exec()
-	query, err = db.Prepare("INSERT INTO user (rollno, name, password) VALUES (?, ?, ?)")
+	query, err = db.Prepare("INSERT INTO user (rollno, name, password,coin) VALUES (?, ?, ?,?)")
 	if err != nil {
 		panic(err)
 	}
-	query.Exec(data.Rollno, data.Name, data.Password)
+	query.Exec(data.Rollno, data.Name, data.Password, 10)
 }
 
 var jwtkey = []byte("secret_key_for_token")
-
-type Claims struct {
-	Rollno int
-	jwt.StandardClaims
-}
 
 func Login(w http.ResponseWriter, r *http.Request) {
 
@@ -94,7 +100,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 	defer db.Close()
-	query := db.QueryRow("select password from user where rollno=$1", p.Rollno)
+	query := db.QueryRow("SELECT password FROM user WHERE rollno=$1", p.Rollno)
 	if err != nil {
 		panic(err)
 	}
@@ -186,4 +192,145 @@ func SecretPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fmt.Fprintf(w, "%d logged in", claims.Rollno)
+}
+
+func TransferCoin(w http.ResponseWriter, r *http.Request) {
+
+	var p TransferCred
+
+	err := json.NewDecoder(r.Body).Decode(&p)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	db, err := sql.Open("sqlite3", "data.db")
+	if err != nil {
+		panic(err)
+	}
+	// defer db.Close()'
+	if p.Coin <= 0 {
+		panic("invalid Transaction")
+	}
+	if !UserExists(p.Torollno) {
+		panic("reciever does not exist")
+	}
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	// query := db.QueryRow("SELECT coin FROM user WHERE rollno=$1", p.Fromrollno)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// var storedCoins struct {
+	// 	Rollno int
+	// 	Coins  int
+	// }
+	// err = query.Scan(&storedCoins.Coins)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// 	return
+	// }
+	// if storedCoins.Coins < p.Coin {
+	// 	http.Error(w, err.Error(), http.StatusBadRequest)
+	// 	return
+
+	// }
+	ra, err := tx.ExecContext(ctx, "UPDATE user SET coin=coin-$1 WHERE rollno=$2 AND coin - $1>=0", p.Coin, p.Fromrollno)
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+	rAffect, err := ra.RowsAffected()
+
+	if err != nil || rAffect == 0 {
+		tx.Rollback()
+		return
+	}
+
+	_, err = tx.ExecContext(ctx, "UPDATE user SET coin=coin+$1 WHERE rollno=$2", p.Coin, p.Torollno)
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+	err = tx.Commit()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+}
+func CheckBalance(w http.ResponseWriter, r *http.Request) {
+	var p struct{ Rollno int }
+
+	err := json.NewDecoder(r.Body).Decode(&p)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// fmt.Println(p.Rollno)
+	db, err := sql.Open("sqlite3", "data.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	query := db.QueryRow("SELECT coin FROM user WHERE rollno=$1", p.Rollno)
+	if err != nil {
+		panic(err)
+	}
+	var storedCoins struct {
+		Rollno int
+		Coins  int
+	}
+
+	err = query.Scan(&storedCoins.Coins)
+
+	if err != nil {
+		// If an entry with the username does not exist, send an "Unauthorized"(401) status
+		if err == sql.ErrNoRows {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		// If the error is of any other type, send a 500 status
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	fmt.Fprintf(w, "%d has %d coins", p.Rollno, storedCoins.Coins)
+
+}
+func AwardCoin(w http.ResponseWriter, r *http.Request) {
+	var p struct {
+		Rollno int
+		Award  int
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&p)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	db, err := sql.Open("sqlite3", "data.db")
+	if err != nil {
+		panic(err)
+	}
+	// defer db.Close()
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
+	_, err = tx.ExecContext(ctx, "UPDATE user SET coin=coin+$1 WHERE rollno=$2", p.Award, p.Rollno)
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+	err = tx.Commit()
+	if err != nil {
+		log.Fatal(err)
+	}
 }

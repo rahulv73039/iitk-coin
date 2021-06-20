@@ -15,7 +15,10 @@ func main() {
 	http.HandleFunc("/login", handle.Login)
 	http.HandleFunc("/signup", handle.Signup)
 	http.HandleFunc("/secretpage", handle.SecretPage)
-
-	http.ListenAndServe(":8080", nil)
+	http.HandleFunc("/balance", handle.CheckBalance) // Get request
+	http.HandleFunc("/transfer", handle.TransferCoin)
+	http.HandleFunc("/award", handle.AwardCoin)
 	fmt.Println("server running")
+	http.ListenAndServe(":8080", nil)
+
 }
