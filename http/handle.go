@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -197,7 +198,8 @@ func SecretPage(w http.ResponseWriter, r *http.Request) {
 func TransferCoin(w http.ResponseWriter, r *http.Request) {
 
 	var p TransferCred
-
+	var mutex = &sync.Mutex{}
+	mutex.Lock()
 	err := json.NewDecoder(r.Body).Decode(&p)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -221,24 +223,7 @@ func TransferCoin(w http.ResponseWriter, r *http.Request) {
 		log.Fatal(err)
 		return
 	}
-	// query := db.QueryRow("SELECT coin FROM user WHERE rollno=$1", p.Fromrollno)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// var storedCoins struct {
-	// 	Rollno int
-	// 	Coins  int
-	// }
-	// err = query.Scan(&storedCoins.Coins)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// 	return
-	// }
-	// if storedCoins.Coins < p.Coin {
-	// 	http.Error(w, err.Error(), http.StatusBadRequest)
-	// 	return
 
-	// }
 	ra, err := tx.ExecContext(ctx, "UPDATE user SET coin=coin-$1 WHERE rollno=$2 AND coin - $1>=0", p.Coin, p.Fromrollno)
 	if err != nil {
 		tx.Rollback()
@@ -257,6 +242,7 @@ func TransferCoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = tx.Commit()
+	mutex.Unlock()
 	if err != nil {
 		log.Fatal(err)
 	}
