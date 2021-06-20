@@ -15,6 +15,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+var mutex = &sync.Mutex{}
+var jwtkey = []byte("secret_key_for_token")
+
 type Person struct {
 	Name     string
 	Rollno   int
@@ -80,8 +83,6 @@ func SignUpUser(data Person) {
 	}
 	query.Exec(data.Rollno, data.Name, data.Password, 10)
 }
-
-var jwtkey = []byte("secret_key_for_token")
 
 func Login(w http.ResponseWriter, r *http.Request) {
 
@@ -195,8 +196,6 @@ func SecretPage(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "%d logged in", claims.Rollno)
 }
 
-var mutex = &sync.Mutex{}
-
 func TransferCoin(w http.ResponseWriter, r *http.Request) {
 
 	var p TransferCred
@@ -204,21 +203,25 @@ func TransferCoin(w http.ResponseWriter, r *http.Request) {
 	mutex.Lock()
 	err := json.NewDecoder(r.Body).Decode(&p)
 	if err != nil {
+		mutex.Unlock()
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	db, err := sql.Open("sqlite3", "data.db")
 	if err != nil {
+		mutex.Unlock()
 		panic(err)
 	}
 	// defer db.Close()'
 	if !UserExists(p.Torollno) {
+		mutex.Unlock()
 		panic("reciever does not exist")
 	}
 	ctx := context.Background()
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
+		mutex.Unlock()
 		log.Fatal(err)
 		return
 	}
