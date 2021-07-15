@@ -25,6 +25,11 @@ type Person struct {
 	Batch    string
 	Admin    bool
 }
+type RedeemCred struct {
+	RollNo int
+	Name   string
+	ItemId int
+}
 type LoginCred struct {
 	Rollno   int
 	Password string
@@ -37,6 +42,11 @@ type TransferCred struct {
 	Fromrollno int
 	Torollno   int
 	Coin       int
+}
+type PendReq struct {
+	RedeemId int
+	RollNo   int
+	ItemId   int
 }
 
 func hashAndSalt(pwd []byte) string {
@@ -218,6 +228,8 @@ func SecretPage(w http.ResponseWriter, r *http.Request) {
 		CheckBalance(w, r)
 	case "/award":
 		AwardCoin(w, r)
+	case "/redeem":
+		RedeemCoin(w, r)
 	}
 
 }
@@ -424,16 +436,16 @@ func AwardCoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err != nil {
-		// If an entry with the username does not exist, send an "Unauthorized"(401) status
-		if err == sql.ErrNoRows {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		// If the error is of any other type, send a 500 status
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
+	// if err != nil {
+	// 	// If an entry with the username does not exist, send an "Unauthorized"(401) status
+	// 	if err == sql.ErrNoRows {
+	// 		w.WriteHeader(http.StatusUnauthorized)
+	// 		return
+	// 	}
+	// 	// If the error is of any other type, send a 500 status
+	// 	w.WriteHeader(http.StatusInternalServerError)
+	// 	return
+	// }
 
 	_, err = tx.ExecContext(ctx, "UPDATE user SET coin=coin+$1 WHERE rollno=$2", p.Award, p.Rollno)
 	if err != nil {
@@ -445,5 +457,244 @@ func AwardCoin(w http.ResponseWriter, r *http.Request) {
 		log.Fatal(err)
 	}
 	AddHistory(0, p.Rollno, p.Award, time.Now().Format("2006.01.02 15:04:05"), "reward")
+
+}
+func CheckCoin(RollNo int) int {
+	db, err := sql.Open("sqlite3", "data.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	query := db.QueryRow("SELECT coin FROM user WHERE rollno=$1", RollNo)
+	if err != nil {
+		panic(err)
+	}
+	var storedCoins struct {
+		Coins int
+	}
+
+	err = query.Scan(&storedCoins.Coins)
+
+	if err != nil {
+		// If an entry with the username does not exist, send an "Unauthorized"(401) status
+		if err == sql.ErrNoRows {
+			panic(err)
+		}
+		// If the error is of any other type, send a 500 status
+		panic(err)
+	}
+	return storedCoins.Coins
+}
+func ItemPrice(ItemId int) int {
+	db, err := sql.Open("sqlite3", "item.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	query := db.QueryRow("SELECT coin FROM item WHERE itemid=$1", ItemId)
+	if err != nil {
+		panic(err)
+	}
+	var itemCoins struct {
+		Coins int
+	}
+
+	err = query.Scan(&itemCoins.Coins)
+
+	if err != nil {
+		// If an entry with the username does not exist, send an "Unauthorized"(401) status
+		if err == sql.ErrNoRows {
+			panic(err)
+		}
+		// If the error is of any other type, send a 500 status
+		panic(err)
+	}
+	return itemCoins.Coins
+}
+func RedeemCoin(w http.ResponseWriter, r *http.Request) {
+
+	var p RedeemCred
+
+	err := json.NewDecoder(r.Body).Decode(&p)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	db, err := sql.Open("sqlite3", "redeem.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	query, err := db.Prepare("CREATE TABLE IF NOT EXISTS redeem (redeemid INTEGER PRIMARY KEY NOT NULL AUTODeeeINCREMENT,rollno INTEGER NOT NULL, name TEXT NOT NULL,itemid INTEGER, status TEXT)")
+	if err != nil {
+		panic(err)
+	}
+	query.Exec()
+	//check if user is applicable to redeem that prize
+	if ItemPrice(p.ItemId) > CheckCoin(p.RollNo) {
+		panic("not enough coin")
+	}
+	query, err = db.Prepare("INSERT INTO redeem (rollno, name, itemid,status) VALUES (?, ?, ?,?)")
+	if err != nil {
+		panic(err)
+	}
+	query.Exec(p.RollNo, p.Name, p.ItemId, "pending")
+
+}
+func RejectRedeem(w http.ResponseWriter, r *http.Request) {
+	var p struct {
+		RedeemId int
+	}
+	err := json.NewDecoder(r.Body).Decode(&p)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	db, err := sql.Open("sqlite3", "redeem.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	_, err = db.Exec("UPDATE redeem SET status='rejected' WHERE redeemid=$1", p.RedeemId)
+	if err != nil {
+		panic(err)
+	}
+
+}
+func ApproveRedeem(w http.ResponseWriter, r *http.Request) {
+	var p struct {
+		RedeemId int
+	}
+	err := json.NewDecoder(r.Body).Decode(&p)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	db, err := sql.Open("sqlite3", "redeem.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	var storedCreds struct {
+		RollNo int
+		ItemId int
+	}
+	query := db.QueryRow("SELECT rollno FROM redeem WHERE redeemid=$1", p.RedeemId)
+	err = query.Scan(&storedCreds.RollNo)
+
+	if err != nil {
+		// If an entry with the username does not exist, send an "Unauthorized"(401) status
+		if err == sql.ErrNoRows {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		// If the error is of any other type, send a 500 status
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	query = db.QueryRow("SELECT itemid FROM redeem WHERE redeemid=$1", p.RedeemId)
+	err = query.Scan(&storedCreds.ItemId)
+
+	if err != nil {
+		// If an entry with the username does not exist, send an "Unauthorized"(401) status
+		if err == sql.ErrNoRows {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		// If the error is of any other type, send a 500 status
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if CheckCoin(storedCreds.RollNo) < ItemPrice(storedCreds.ItemId) {
+		panic(err)
+	}
+	db1, err := sql.Open("sqlite3", "data.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db1.Close()
+	ctx := context.Background()
+	tx, err := db1.BeginTx(ctx, nil)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	_, err = tx.ExecContext(ctx, "UPDATE user SET coin=coin-$1 WHERE rollno=$2", ItemPrice(storedCreds.ItemId), storedCreds.RollNo)
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+	err = tx.Commit()
+	if err != nil {
+		log.Fatal(err)
+	}
+	db2, err := sql.Open("sqlite3", "redeem.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db2.Close()
+	_, err = db.Exec("UPDATE redeem SET status='Approved' WHERE redeemid=$1", p.RedeemId)
+	if err != nil {
+		panic(err)
+	}
+
+}
+func PendRedeemReq(w http.ResponseWriter, r *http.Request) {
+	db, err := sql.Open("sqlite3", "redeem.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	rows, err := db.Query("SELECT redeemid,rollno,itemid FROM redeem WHERE status='pending'")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer rows.Close()
+	var PendingRequests []*PendReq
+	for rows.Next() {
+		c := new(PendReq)
+		err := rows.Scan(&c.RedeemId, &c.RollNo, &c.ItemId)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		PendingRequests = append(PendingRequests, c)
+	}
+	if err := rows.Err(); err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(PendingRequests); err != nil {
+		fmt.Println(err)
+	}
+
+}
+func AddItem(w http.ResponseWriter, r *http.Request) {
+	var p struct {
+		ItemName  int
+		ItemPrice int
+	}
+	err := json.NewDecoder(r.Body).Decode(&p)
+	if err != nil {
+		panic(err)
+	}
+	db, err := sql.Open("sqlite3", "item.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	query, err := db.Prepare("CREATE TABLE IF NOT EXISTS item (itemid INTEGER PRIMARY KEY NOT NULL AUTOINCREMENT,itemname TEXT, coin INTEGER)")
+	if err != nil {
+		panic(err)
+	}
+	query.Exec()
+	query, err = db.Prepare("INSERT INTO ITEM (itemname, coin) VALUES(?,?) ")
+	if err != nil {
+		panic(err)
+	}
+	query.Exec(p.ItemName, p.ItemPrice)
 
 }

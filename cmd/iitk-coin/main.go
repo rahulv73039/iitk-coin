@@ -27,6 +27,8 @@ func main() {
 	http.HandleFunc("/balance", handle.SecretPage) // Get request
 	http.HandleFunc("/transfer", handle.TransferCoin)
 	http.HandleFunc("/award", handle.SecretPage)
+	http.HandleFunc("/redeem", handle.SecretPage)
+	http.HandleFunc("/additem", handle.AddItem)
 	fmt.Println("server running")
 	http.ListenAndServe(":8080", nil)
 
